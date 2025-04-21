@@ -27,7 +27,54 @@ sp {apply*wander
    (<command> ^VelR 2)
    (<command> ^VelL 0)
 }
-    
+
+###################  geração aleatória de jóias e alimentos no mundo  ##################
+
+# Gera uma entidade (jóia ou alimento) em posição aleatória
+sp {propose*generate*entity
+   (state <s> ^io.input-link <il>)
+-->
+   (<s> ^operator <o> +)
+   (<o> ^name generateEntity)}
+
+# Quando gerar, escolhe aleatoriamente tipo e posição
+sp {apply*generate*entity
+   (state <s> ^operator <o> ^io <io>)
+   (<io> ^output-link <ol>)
+   (<o> ^name generateEntity)
+   - (<ol> ^NEW-ENTITY <anything>)
+-->
+   ;; determina aleatoriamente se é FOOD ou JEWEL
+   (math-create-random-integer 0 1 <r>)           # 0 = FOOD, 1 = JEWEL
+   (math-create-random-float 0 100 <randX>)       # posição X entre 0 e 100
+   (math-create-random-float 0 100 <randY>)       # posição Y entre 0 e 100
+   (if (<r> == 0)
+       (propose*new-food <randX> <randY>)
+       (propose*new-jewel <randX> <randY>))
+   (<ol> ^NEW-ENTITY <ent>)}
+
+# Cria um alimento
+sp {propose*new-food
+   (state <s> ^io.output-link <ol>)
+   (o <o> ^name generateEntity)
+-->
+   (<ol> ^ENTITY <e>)
+   (<e> ^TYPE FOOD
+        ^X <randX>
+        ^Y <randY>
+        ^VALUE (math-create-random-integer 1 10))}  
+
+# Cria uma joia
+sp {propose*new-jewel
+   (state <s> ^io.output-link <ol>)
+   (o <o> ^name generateEntity)
+-->
+   (<ol> ^ENTITY <e>)
+   (<e> ^TYPE JEWEL
+        ^X <randX>
+        ^Y <randY>
+        ^VALUE (math-create-random-integer 1 5))}   
+
 ##############################  MOVE FOOD  #####################################
 # This operator will make the agent go straight to the food
 
@@ -82,26 +129,31 @@ sp {apply*move*food
 }
   
 ###############################  EAT FOOD  #####################################
-# This operator will make the agent eat the food
+#Se o nível de energia for menor do que 30%, faça ele localizar o alimento mais próximo conhecido 
+#e ir até ele comê-lo. Observe que um alimento conhecido é mais do que um alimento que está sendo 
+#percebido no campo visual da criatura. Será necessário criar uma memória FORA do Soar (ou seja, no 
+#Java), armazenando todos os alimentos que já foram vistos, e não somente os que estão visíveis no 
+#campo visual. Da mesma forma, será necessário gerenciar essa memória, para apagar os alimentos que 
+#forem comidos pela criatura, quando esta o fizer.
 
-# Propose*eat*food:
+
 sp {propose*eat*food
-   (state <s> ^io.input-link <il>)
-   (<il> ^CREATURE <creature>)
-   (<creature> ^SENSOR.VISUAL.ENTITY <entity>)
-   (<entity> ^TYPE FOOD) 
-   (<entity> ^DISTANCE <foodDistance> < 30)
-   (<entity> ^NAME <foodName>)
-   (<creature> ^SENSOR.VISUAL.ENTITY.NAME <memoryItemName> <foodName>)     
+   (state <s> ^io.input-link <il>)            
+   (<il> ^CREATURE <creature>)                
+   (<creature> ^ENERGY <currentEnergy> < 30)       
+   (<creature> ^MEMORY.ENTITY <memoryFood>)
+   (<memoryFood> ^TYPE FOOD)
+   (<memoryFood> ^NAME <foodName>)
+   (<memoryFood> ^DISTANCE <foodDistance>)
 -->
-   (<s> ^operator <o> +)
-   (<o> ^name eatFood)
-   (<o> ^parameter <food>)
-   (<food> ^NAME <foodName>)
-   (<food> ^DISTANCE <foodDistance>)}
+   (<s> ^operator <o> +)                       
+   (<o> ^name eatFood)                         
+   (<o> ^parameter <food>)                    
+   (<food> ^NAME <foodName>)                   
+   (<food> ^DISTANCE <foodDistance>)          
+}
    
 # Apply*eat*food:
-# If the move operator is selected, then generate an output command to it 
 sp {apply*eat*food
    (state <s> ^operator <o>
               ^io <io>)
@@ -110,16 +162,31 @@ sp {apply*eat*food
    (<o> ^name eatFood)
    (<o> ^parameter.NAME <foodName>)
    (<il> ^CREATURE <creature>) 
-   (<creature> ^SENSOR.VISUAL <memory>)
+   (<creature> ^MEMORY <memory>)
+   (<memory> ^COUNT <quantity>)  
    (<memory> ^ENTITY <memoryEntity>)
    (<memoryEntity> ^NAME <memoryEntityName> <foodName>)
    - (<ol> ^EAT <something>)
 -->
    (<ol> ^EAT <command>)
    (<command> ^Name <foodName>)
+   (<memory> ^COUNT <quantity> -
+             ^COUNT (- <quantity> 1))
+   (<memory> ^ENTITY <memoryEntity> -)
    #(halt)
 }
   
+# Apply*eat*remove-move: 
+sp {apply*eatFood*remove-eat
+(state <s> ^operator <o>            
+           ^io.output-link <out>)
+(<o> ^name eatFood)
+(<o> ^parameter.name <foodName>)
+(<out> ^EAT <eat>)
+(<eat> ^status complete)
+-->
+(<out> ^EAT <eat> -)}
+
 #############################  MOVE JEWEL  #####################################
 # This operator will make the agent go straight to the jewel
 
@@ -174,44 +241,103 @@ sp {apply*move*jewel
 }
 
 ##############################  GET JEWEL  #####################################
-# This operator will make the agent get the jewel
+# Se o nível de energia for maior do que 30%, faça ele localizar a jóia mais próxima 
+# conhecida que pertença a um Leaflet, pegá-la e armazená-la na Bag.
 
-# Propose*get*jewel:
-sp {propose*get*jewel
+sp {propose*get*jewel*leaflet
    (state <s> ^io.input-link <il>)
    (<il> ^CREATURE <creature>)
    (<creature> ^SENSOR.VISUAL.ENTITY <entity>)
-   (<entity> ^TYPE JEWEL) 
-   (<entity> ^DISTANCE <jewelDistance> < 30)
-   (<entity> ^NAME <jewelName>)
-   (<creature> ^SENSOR.VISUAL.ENTITY.NAME <memoryItemName> <jewelName>)     
+   (<entity> ^TYPE JEWEL)
+   (<entity> ^TYPE Leaflet)
+   (<entity> ^DISTANCE <jewelDistance> < 100)
+   (<creature> ^ENERGY <energy> (greater-than <energy> 30))
+   (<creature> ^MEMORY.ENTITY.NAME <memoryItemName> <jewelName>)
 -->
    (<s> ^operator <o> +)
    (<o> ^name getJewel)
    (<o> ^parameter <jewel>)
    (<jewel> ^NAME <jewelName>)
    (<jewel> ^DISTANCE <jewelDistance>)}
-   
-# Apply*get*jewel:
-# If the move operator is selected, then generate an output command to it 
-sp {apply*get*jewel
-   (state <s> ^operator <o>
-              ^io <io>)
-   (<io> ^input-link <il>)      
+
+sp {apply*get*jewel*leaflet
+   (state <s> ^operator <o> ^io <io>)
+   (<io> ^input-link <il>)
    (<io> ^output-link <ol>)
    (<o> ^name getJewel)
    (<o> ^parameter.NAME <jewelName>)
-   (<il> ^CREATURE <creature>) 
-   (<creature> ^SENSOR.VISUAL <memory>)
+   (<il> ^CREATURE <creature>)
+   (<creature> ^MEMORY <memory>)
    (<memory> ^ENTITY <memoryEntity>)
-   (<memoryEntity> ^NAME <memoryEntityName> <jewelName>)
-   - (<ol> ^GET <anything>)   # Colocado por Ricardo
+   (<memoryEntity> ^NAME <jewelName>)
+   - (<ol> ^GET <anything>)  # Joia será retirada
 -->
    (<ol> ^GET <command>)
    (<command> ^Name <jewelName>)
-   #(halt)
-}
-  
+   (<creature> ^BAG <bag>)  # Armazena a joia na Bag
+   (<bag> ^CONTAINS <jewelName>)
+   (<memory> ^ENTITY <memoryEntity> -) # Remove a joia da memória
+   #(halt)}
+
+sp {apply*getJewel*remove-get
+   (state <s> ^operator <o> ^io.output-link <out>)
+   (<o> ^name getJewel)
+   (<out> ^GET <move>)
+   (<move> ^status complete)
+-->
+   (<out> ^GET <move> -)}
+
+##############################  TROCA DAS JOIAS  ##############################
+# Se o nível de energia for maior do que 30%, e a criatura já possuir um conjunto de jóias
+# em seu Leaflet, que permita a troca dessas jóias por pontos, a criatura deve dar 
+# prioridade (em relação a buscar novas jóias) por ir até um delivery spot e trocar as 
+# jóias por pontos.
+
+sp {propose*trade*leaflet
+   (state <s> ^io.input-link <il>)
+   (<il> ^CREATURE <creature>)
+   (<creature> ^SENSOR.VISUAL.ENTITY <entity>)
+   (<entity> ^TYPE LEAFLET)
+   (<entity> ^CONTAINS <jewel>)
+   (<creature> ^ENERGY <energy> (greater-than <energy> 30))
+   (<creature> ^MEMORY.ENTITY <memoryEntity>)
+   (<memoryEntity> ^NAME <jewelName>)
+   (<entity> ^TYPE DELIVERY_SPOT)
+-->
+   (<s> ^operator <o> +)
+   (<o> ^name moveToDeliverySpot)
+   (<o> ^parameter <deliverySpot>)
+   (<deliverySpot> ^NAME deliverySpot)}
+
+sp {apply*trade*leaflet
+   (state <s> ^operator <o> ^io <io>)
+   (<io> ^input-link <il>)
+   (<io> ^output-link <ol>)
+   (<o> ^name moveToDeliverySpot)
+   (<o> ^parameter <deliverySpot>)
+   (<creature> ^SENSOR.VISUAL.ENTITY <entity>)
+   (<entity> ^TYPE LEAFLET)
+   (<entity> ^CONTAINS <jewel>)
+   (<creature> ^MEMORY.ENTITY <memoryEntity>)
+   (<memoryEntity> ^NAME <jewelName>)
+   - (<ol> ^TRADE <anything>)  # Ação de troca de jóias por pontos
+-->
+   (<ol> ^TRADE <command>)
+   (<command> ^NAME <jewelName> ^TO <deliverySpot>)
+   (<creature> ^POINTS <points>)
+   (<points> ^ADD <jewelValue>)  # Adiciona pontos pela troca das jóias
+   (<entity> ^CONTAINS <jewel> -)  # Remove as jóias do Leaflet
+   (<memoryEntity> ^NAME <jewelName> -)  # Remove da memória
+   #(halt)}
+
+sp {apply*trade*remove-trade
+   (state <s> ^operator <o> ^io.output-link <out>)
+   (<o> ^name moveToDeliverySpot)
+   (<out> ^TRADE <trade>)
+   (<trade> ^status complete)
+-->
+   (<out> ^TRADE <trade> -)}
+
 #############################  AVOID BRICK  ####################################
 # This operator will make the agent avoid the brick
 # Propose*avoid*brick:
