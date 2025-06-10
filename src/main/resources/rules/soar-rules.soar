@@ -518,8 +518,6 @@ sp {pref*avoidBrick*avoidBrick*without*move*jewel-equals
 (write |avoidBrick vs avoidBrick | <distance> | equals to | <distance2> (crlf))}
 
 
-# WANDER
-
 # Wander Preferences
 sp {pref*wander
 (state <s> ^operator <o> +)
